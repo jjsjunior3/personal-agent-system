@@ -1,0 +1,32 @@
+services:
+  # Serviço de API do supervisor - o "supervisor" que futuramente vai
+  # rodar a lógica do LangGraph.
+  supervisor-api:
+    build:
+      context: ./supervisor_api #onde está o Dockerfile e o código
+    ports:
+      - "8000:8000" # mapeia porta 8000 da sua maquina para porta 8000 do container
+    env_file:
+      - .env        # injeta as variáveis dentro do container
+    healthcheck:
+      # Comando que o Docker roda periodicamente para saber se o 
+      # serviço esta de fato saudável, não "só ligado".
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen ('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+  
+  # Serviço do bot do TELEGRAM - o "cliente" que fala com o usuário
+  # e repassa a menssagem para a API.
+  telegram-bot:
+    build:
+      context: ./telegram_bot
+    env_file:
+      - .env
+    depends_on:
+      supervisor-api:
+        # só inicia o bot depois que o healthcheck da API acima
+        # reportar "healthy" - evita o ocorrido onde o bot tenta
+        # falar com aum API que aidna nºao terminou de subir.
+        condition: service_healthy

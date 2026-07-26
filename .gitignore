@@ -1,0 +1,21 @@
+.env
+
+# Cache e artefatos do Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Banco de dados local do checkpointer (SqliteSaver)
+*.db
+*.sqlite3
+
+# Arquivos do sistema operacional
+.DS_Store
+
+# Logs
+*.log
+
+# Pasta de depenência do Docker
+.docker/
