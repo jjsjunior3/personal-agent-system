@@ -2,8 +2,8 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.sqlite import SqliteSaver
-import sqlite3
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+import aiosqlite
 
 # importa o nó de conversa geral do seu novo local
 from nodes.general_chat import general_chat_node
@@ -13,7 +13,7 @@ from router import route_message
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
-def build_graph():
+async def build_graph():
     builder = StateGraph(AgentState)
 
     # Registra os dois nós de destino possível
@@ -37,9 +37,9 @@ def build_graph():
     builder.add_edge("triage", END)
 
 
-    conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
+    conn = await aiosqlite.connect("checkpoints.db")
+    checkpointer = AsyncSqliteSaver(conn)
 
     return builder.compile(checkpointer=checkpointer)
 
-supervisor_graph = build_graph()
+supervisor_graph = None

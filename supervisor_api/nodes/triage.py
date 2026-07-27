@@ -2,15 +2,11 @@ import os
 from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
 
+
 class TriageAnalysis(BaseModel):
-    """
-    Formato estruturado de análise de uma ideia. Usar um schema aqui
-    (em vez de texto livre) é o que vai permitir, nas próximas fases,
-    decidir programaticamente se um card deve ser criado no Trello
-    (por exemplo, só quando recomendação == "seguir").
-    """
     necessaria: bool = Field(
         description="A ideia resolve um problema real e relevante hoje?"
     )
@@ -22,15 +18,26 @@ class TriageAnalysis(BaseModel):
         description="O benefício justifica o esforço de implementação?"
     )
     recomendacao: Literal["seguir", "descartar", "revisar_depois"] = Field(
-        description="Decisão consolidada com base nos três critérios acima."
+        description="Decisão final consolidada com base nos três critérios acima."
     )
     justificativa: str = Field(
         description="Explicação curta (2-3 frases) do raciocínio por trás da recomendação."
     )
 
-# Cliente do Claude Sonnet, usado especificamente para análise de
-# viabilidade - uma tarefa que se beneficia de raciocínio mais forte,
-# diferente da classificação simples feita pelo router
+
+# Cliente MCP que sabe como se conectar ao trello-mcp — o endereço usa
+# o nome do serviço no Docker Compose, igual fizemos com o supervisor-api
+# e o bot: containers se encontram pelo nome do serviço, não por IP.
+mcp_client = MultiServerMCPClient(
+    {
+        "trello": {
+            "url": "http://trello_mcp:8001/mcp",
+            "transport": "streamable_http",
+        }
+    }
+)
+
+
 triage_llm = ChatAnthropic(
     model="claude-sonnet-4-5-20250929",
     api_key=os.getenv("ANTHROPIC_API_KEY"),
@@ -38,22 +45,32 @@ triage_llm = ChatAnthropic(
 
 structured_triage_llm = triage_llm.with_structured_output(TriageAnalysis)
 
-TRIAGE_SYSTEM_PROMPT = """ Você é um analista de produto experiente, ajudando\
-Junior - desenvolvedor e fundador do SynerEduc (Saas de gestão Escolar) - a\
-avaliar rapidamente novas ideias com honestidade, considerando:
-- NECESSÁRIO: resolve um problema real, hoje?
-- VIÁVEL: dá para construir com o tempo/recursos realista dele?
-- AGREGA VALOR: O retorno justifica o esforço, comparando a outras prioridades?
 
-seja direto e crítico, Prefira recomendar "descartar" ou "revisar_depois"\
+TRIAGE_SYSTEM_PROMPT = """Você é um analista de produto experiente, ajudando \
+Junior — desenvolvedor e fundador do SynerEduc (SaaS de gestão escolar) — a \
+avaliar rapidamente novas ideias de projeto ou funcionalidade.
+
+Junior tem múltiplas responsabilidades simultâneas (SynerEduc, faculdade, \
+estudos de IA, tutoria) e precisa de decisões objetivas, não animadoras. \
+Avalie cada ideia com honestidade, considerando:
+
+- NECESSÁRIA: resolve um problema real, hoje?
+- VIÁVEL: dá pra construir com o tempo/recursos realistas dele?
+- AGREGA VALOR: o retorno justifica o esforço, comparado a outras prioridades?
+
+Seja direto e crítico. Prefira recomendar "descartar" ou "revisar_depois" \
 a inflar ideias medianas."""
 
-def triage_node(state: dict) -> dict:
+
+async def triage_node(state: dict) -> dict:
     """
-    Nó de triagem de ideias: recebe a última mensagem do usuário,
-    roda a análise estruturada com Claude Sonnet, e devolve uma
-    resposta em texte legível - mantendo o formato estruturado
-    disponível internamente para uso nas próximas fases (Trello).
+    Nó de triagem de ideias: analisa a ideia com Claude Sonnet e,
+    se a recomendação for "seguir", cria automaticamente um card
+    no Trello (lista Backlog) com o resumo da análise.
+
+    Note que esta função agora é 'async def' — isso é necessário
+    porque tanto a busca das ferramentas MCP quanto a criação do
+    card envolvem chamadas de rede assíncronas.
     """
     last_message = state["messages"][-1]
 
@@ -64,10 +81,6 @@ def triage_node(state: dict) -> dict:
         ]
     )
 
-    # Montar uma resposta legível em texto a partir do objetivo estruturado
-    # Isso é o que o usuário ver no telegram: o objetivo 'analysis' em si
-    # (com os campos booleanos) será programaticamente a fase 3.
-
     resumo = (
         f"**Análise da ideia**\n\n"
         f"• Necessária: {'✅' if analysis.necessaria else '❌'}\n"
@@ -76,5 +89,19 @@ def triage_node(state: dict) -> dict:
         f"**Recomendação:** {analysis.recomendacao}\n"
         f"{analysis.justificativa}"
     )
+
+    # Só cria o card se a recomendação final for "seguir" — as ideias
+    # descartadas ou para revisar depois não entram no board de produção.
+    if analysis.recomendacao == "seguir":
+        tools = await mcp_client.get_tools()
+        create_card_tool = next(t for t in tools if t.name == "create_card")
+
+        card_result = await create_card_tool.ainvoke(
+            {
+                "title": last_message.content[:100],
+                "description": resumo,
+            }
+        )
+        resumo += f"\n\n📌 {card_result}"
 
     return {"messages": [("assistant", resumo)]}
