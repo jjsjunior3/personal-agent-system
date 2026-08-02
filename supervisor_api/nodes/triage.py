@@ -4,6 +4,8 @@ from typing import Literal
 from langchain_anthropic import ChatAnthropic
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
+from langgraph.types import interrupt
+
 
 
 class TriageAnalysis(BaseModel):
@@ -63,15 +65,6 @@ a inflar ideias medianas."""
 
 
 async def triage_node(state: dict) -> dict:
-    """
-    Nó de triagem de ideias: analisa a ideia com Claude Sonnet e,
-    se a recomendação for "seguir", cria automaticamente um card
-    no Trello (lista Backlog) com o resumo da análise.
-
-    Note que esta função agora é 'async def' — isso é necessário
-    porque tanto a busca das ferramentas MCP quanto a criação do
-    card envolvem chamadas de rede assíncronas.
-    """
     last_message = state["messages"][-1]
 
     analysis = structured_triage_llm.invoke(
@@ -90,18 +83,24 @@ async def triage_node(state: dict) -> dict:
         f"{analysis.justificativa}"
     )
 
-    # Só cria o card se a recomendação final for "seguir" — as ideias
-    # descartadas ou para revisar depois não entram no board de produção.
     if analysis.recomendacao == "seguir":
-        tools = await mcp_client.get_tools()
-        create_card_tool = next(t for t in tools if t.name == "create_card")
-
-        card_result = await create_card_tool.ainvoke(
-            {
-                "title": last_message.content[:100],
-                "description": resumo,
-            }
+        user_response = interrupt(
+            f"{resumo}\n\n🤔 Posso criar o card no Trello para essa ideia? (sim/não)"
         )
-        resumo += f"\n\n📌 {card_result}"
+
+        # Verificação direta e determinística: sem custo de LLM,
+        # sem latência extra. Normaliza para minúsculas e remove
+        # espaços, para aceitar variações como "Sim", " sim ", "SIM".
+        aprovado = user_response.strip().lower() in ("sim", "s", "yes", "y")
+
+        if aprovado:
+            tools = await mcp_client.get_tools()
+            create_card_tool = next(t for t in tools if t.name == "create_card")
+            card_result = await create_card_tool.ainvoke(
+                {"title": last_message.content[:100], "description": resumo}
+            )
+            resumo += f"\n\n📌 {card_result}"
+        else:
+            resumo += "\n\n👍 Ok, não vou criar o card."
 
     return {"messages": [("assistant", resumo)]}
