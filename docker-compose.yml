@@ -11,6 +11,8 @@ services:
     depends_on:
       trello_mcp:
         condition: service_healthy
+      docs_mcp:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen ('http://localhost:8000/health')"]
       interval: 5s
@@ -43,3 +45,15 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  docs_mcp:
+      build:
+        context: ./mcp_servers/docs_server
+      volumes:
+        - "D:/Portal Conexão/AVA/docs:/app/synereduc_docs:ro"
+      healthcheck:
+        test: ["CMD", "python", "-c", "import socket; s = socket.create_connection(('localhost', 8002), timeout=3)"]
+        interval: 5s
+        timeout: 3s
+        retries: 5
+        start_period: 10s

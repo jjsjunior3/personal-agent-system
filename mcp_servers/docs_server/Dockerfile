@@ -13,6 +13,6 @@ COPY . .
 # diferente da 8000 do supervisor-api, para não haver conflito
 # quando os dois conteiner rodarem ao mesmo tempo.
 
-EXPOSE 8001
+EXPOSE 8002
 
 CMD ["python", "server.py"]

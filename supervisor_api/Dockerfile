@@ -1,6 +1,8 @@
 # Imagem Base: Python 3.12 na versão "Slim" (enxuta, sem ferramentas extras)
 FROM python:3.12-slim
 
+ENV PYTHONUNBUFFERED=1
+
 # Define o diretório do trabalho dentro do container.
 # Todos os comandos seguintes (COPY, RUN, CMD) acontecem relativos  a esse caminho.
 WORKDIR /app

@@ -2,10 +2,10 @@ import os
 from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
 from langgraph.types import interrupt
-
 
 
 class TriageAnalysis(BaseModel):
@@ -27,15 +27,16 @@ class TriageAnalysis(BaseModel):
     )
 
 
-# Cliente MCP que sabe como se conectar ao trello-mcp — o endereço usa
-# o nome do serviço no Docker Compose, igual fizemos com o supervisor-api
-# e o bot: containers se encontram pelo nome do serviço, não por IP.
 mcp_client = MultiServerMCPClient(
     {
         "trello": {
             "url": "http://trello_mcp:8001/mcp",
             "transport": "streamable_http",
-        }
+        },
+        "docs": {
+            "url": "http://docs_mcp:8002/mcp",
+            "transport": "streamable_http",
+        },
     }
 )
 
@@ -52,6 +53,14 @@ TRIAGE_SYSTEM_PROMPT = """Você é um analista de produto experiente, ajudando \
 Junior — desenvolvedor e fundador do SynerEduc (SaaS de gestão escolar) — a \
 avaliar rapidamente novas ideias de projeto ou funcionalidade.
 
+Você tem acesso a ferramentas para consultar a documentação do SynerEduc \
+(PRD, ROADMAP, decisões de arquitetura). Use list_docs() para ver quais \
+documentos existem, e read_doc() para ler um documento específico — mas \
+APENAS quando isso genuinamente ajudar a avaliar a ideia (ex: para checar \
+se algo parecido já está planejado, ou se conflita com uma decisão já \
+tomada). Para ideias simples e autoexplicativas, não é necessário consultar \
+nada — responda direto.
+
 Junior tem múltiplas responsabilidades simultâneas (SynerEduc, faculdade, \
 estudos de IA, tutoria) e precisa de decisões objetivas, não animadoras. \
 Avalie cada ideia com honestidade, considerando:
@@ -64,15 +73,57 @@ Seja direto e crítico. Prefira recomendar "descartar" ou "revisar_depois" \
 a inflar ideias medianas."""
 
 
+async def _investigate(user_message: str) -> list:
+    """
+    Etapa 1 — Investigação: roda um loop onde o Sonnet pode chamar as
+    ferramentas de documentação (docs) quantas vezes achar necessário,
+    até decidir que já tem contexto suficiente. Não usa a ferramenta
+    do Trello aqui — essa etapa é só para reunir CONTEXTO, não para agir.
+
+    Devolve o histórico completo da conversa (incluindo os resultados
+    das ferramentas usadas), pronto para a etapa de decisão final.
+    """
+    all_tools = await mcp_client.get_tools()
+    docs_tools = [t for t in all_tools if t.name in ("list_docs", "read_doc")]
+
+    llm_with_tools = triage_llm.bind_tools(docs_tools)
+
+    messages = [
+        ("system", TRIAGE_SYSTEM_PROMPT),
+        ("user", user_message),
+    ]
+
+    # Loop de investigação: continua enquanto o modelo pedir para
+    # usar ferramentas. Limitamos a 5 iterações como proteção contra
+    # loops infinitos (o modelo insistindo em chamar ferramentas).
+    for _ in range(5):
+        response = await llm_with_tools.ainvoke(messages)
+        messages.append(response)
+
+        if not response.tool_calls:
+            # O modelo não pediu nenhuma ferramenta desta vez —
+            # significa que ele já considera ter contexto suficiente.
+            break
+
+        for tool_call in response.tool_calls:
+            tool = next(t for t in docs_tools if t.name == tool_call["name"])
+            tool_result = await tool.ainvoke(tool_call["args"])
+            messages.append(
+                ToolMessage(content=str(tool_result), tool_call_id=tool_call["id"])
+            )
+
+    return messages
+
+
 async def triage_node(state: dict) -> dict:
     last_message = state["messages"][-1]
 
-    analysis = structured_triage_llm.invoke(
-        [
-            ("system", TRIAGE_SYSTEM_PROMPT),
-            ("user", last_message.content),
-        ]
-    )
+    # Etapa 1: investigação (pode ou não consultar documentação).
+    investigation_messages = await _investigate(last_message.content)
+
+    # Etapa 2: decisão final estruturada, já com todo o contexto
+    # reunido na etapa anterior (incluindo qualquer documento lido).
+    analysis = structured_triage_llm.invoke(investigation_messages)
 
     resumo = (
         f"**Análise da ideia**\n\n"
@@ -88,14 +139,11 @@ async def triage_node(state: dict) -> dict:
             f"{resumo}\n\n🤔 Posso criar o card no Trello para essa ideia? (sim/não)"
         )
 
-        # Verificação direta e determinística: sem custo de LLM,
-        # sem latência extra. Normaliza para minúsculas e remove
-        # espaços, para aceitar variações como "Sim", " sim ", "SIM".
         aprovado = user_response.strip().lower() in ("sim", "s", "yes", "y")
 
         if aprovado:
-            tools = await mcp_client.get_tools()
-            create_card_tool = next(t for t in tools if t.name == "create_card")
+            all_tools = await mcp_client.get_tools()
+            create_card_tool = next(t for t in all_tools if t.name == "create_card")
             card_result = await create_card_tool.ainvoke(
                 {"title": last_message.content[:100], "description": resumo}
             )
