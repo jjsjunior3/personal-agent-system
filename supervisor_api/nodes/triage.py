@@ -7,6 +7,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
 from langgraph.types import interrupt
 
+from memory.decision_log import log_decision, count_consecutive_approvals, init_decision_log
+from memory.rules_store import is_auto_approved, set_auto_approve, init_rules_store
+
 
 class TriageAnalysis(BaseModel):
     necessaria: bool = Field(
@@ -73,6 +76,18 @@ Seja direto e crítico. Prefira recomendar "descartar" ou "revisar_depois" \
 a inflar ideias medianas."""
 
 
+# Garante que as tabelas de memória (log de decisões e regras) existem
+# antes de qualquer uso — chamado uma vez na importação do módulo,
+# mesmo padrão de inicialização já usado para o grafo (build_graph).
+init_decision_log()
+init_rules_store()
+
+# Identifica este tipo específico de ação para fins de memória/curadoria.
+# Se no futuro outras ações de risco existirem (ex: enviar e-mail), cada
+# uma teria sua própria constante e sua própria trilha de confiança.
+ACTION_TYPE = "create_trello_card"
+
+
 async def _investigate(user_message: str) -> list:
     """
     Etapa 1 — Investigação: roda um loop onde o Sonnet pode chamar as
@@ -93,16 +108,11 @@ async def _investigate(user_message: str) -> list:
         ("user", user_message),
     ]
 
-    # Loop de investigação: continua enquanto o modelo pedir para
-    # usar ferramentas. Limitamos a 5 iterações como proteção contra
-    # loops infinitos (o modelo insistindo em chamar ferramentas).
     for _ in range(5):
         response = await llm_with_tools.ainvoke(messages)
         messages.append(response)
 
         if not response.tool_calls:
-            # O modelo não pediu nenhuma ferramenta desta vez —
-            # significa que ele já considera ter contexto suficiente.
             break
 
         for tool_call in response.tool_calls:
@@ -135,11 +145,30 @@ async def triage_node(state: dict) -> dict:
     )
 
     if analysis.recomendacao == "seguir":
-        user_response = interrupt(
-            f"{resumo}\n\n🤔 Posso criar o card no Trello para essa ideia? (sim/não)"
-        )
+        # Verifica se já existe confiança suficiente para pular o HITL.
+        if is_auto_approved(ACTION_TYPE):
+            aprovado = True
+            log_decision(ACTION_TYPE, approved=True)
+            resumo += "\n\n⚡ Auto-aprovado (regra ativa)."
+        else:
+            user_response = interrupt(
+                f"{resumo}\n\n🤔 Posso criar o card no Trello para essa ideia? (sim/não)"
+            )
+            aprovado = user_response.strip().lower() in ("sim", "s", "yes", "y")
+            log_decision(ACTION_TYPE, approved=aprovado)
 
-        aprovado = user_response.strip().lower() in ("sim", "s", "yes", "y")
+            # Verifica se acabamos de completar 5 aprovações seguidas,
+            # e se ainda não existe regra ativa (evita perguntar de novo
+            # caso o usuário já tenha recusado ativar antes).
+            if aprovado and count_consecutive_approvals(ACTION_TYPE) >= 5 and not is_auto_approved(ACTION_TYPE):
+                offer_response = interrupt(
+                    "💡 Notei que você aprovou a criação de card 5 vezes seguidas. "
+                    "Quer que eu pare de perguntar e crie automaticamente daqui pra "
+                    "frente, quando a recomendação for 'seguir'? (sim/não)"
+                )
+                if offer_response.strip().lower() in ("sim", "s", "yes", "y"):
+                    set_auto_approve(ACTION_TYPE, True)
+                    resumo += "\n\n✅ Auto-aprovação ativada para criação de cards."
 
         if aprovado:
             all_tools = await mcp_client.get_tools()
