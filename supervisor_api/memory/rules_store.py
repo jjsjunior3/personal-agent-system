@@ -1,6 +1,8 @@
 import sqlite3
 
-DB_PATH = "checkpoints.db"
+# Importado de config.py: uma única fonte da verdade para o caminho
+# do banco, compartilhada com o checkpointer do LangGraph em graph.py.
+from config import DB_PATH
 
 
 def init_rules_store():

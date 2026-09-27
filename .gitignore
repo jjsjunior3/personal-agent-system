@@ -1,3 +1,4 @@
+# Segredos — NUNCA versionar
 .env
 
 # Cache e artefatos do Python
@@ -7,15 +8,27 @@ __pycache__/
 .venv/
 venv/
 
-# Banco de dados local do checkpointer (SqliteSaver)
+# Banco de dados local do checkpointer (SqliteSaver).
+# Em Docker o banco vive num volume nomeado, fora da pasta do projeto;
+# este padrão cobre o caso de rodar a API direto na máquina, com
+# DATA_DIR apontando para um diretório local.
 *.db
 *.sqlite3
+/data/
+
+# Binários de terceiros — não pertencem ao repositório.
+# O cloudflared é baixado de https://github.com/cloudflare/cloudflared/releases
+# conforme o sistema operacional de cada um; versionar o .exe de Windows
+# (54 MB) inchava o repositório e não servia para quem usa Linux ou Mac.
+cloudflared
+cloudflared.exe
 
 # Arquivos do sistema operacional
 .DS_Store
+Thumbs.db
 
 # Logs
 *.log
 
-# Pasta de depenência do Docker
+# Pasta de dependência do Docker
 .docker/

@@ -6,6 +6,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import aiosqlite
 
 # importa o nó de conversa geral do seu novo local
+from config import DB_PATH
 from nodes.general_chat import general_chat_node
 from nodes.triage import triage_node
 from router import route_message
@@ -37,7 +38,13 @@ async def build_graph():
     builder.add_edge("triage", END)
 
 
-    conn = await aiosqlite.connect("checkpoints.db")
+    # DB_PATH vem de config.py, que o deriva da variável de ambiente
+    # DATA_DIR. Esse diretório é um VOLUME do Docker — ou seja, sobrevive
+    # a `docker compose up --build`. Antes desta mudança o banco era criado
+    # em "checkpoints.db" (caminho relativo ao WORKDIR /app, dentro da
+    # camada gravável do container), e toda reconstrução da imagem apagava
+    # o histórico das conversas e a memória de decisões.
+    conn = await aiosqlite.connect(DB_PATH)
     checkpointer = AsyncSqliteSaver(conn)
 
     return builder.compile(checkpointer=checkpointer)

@@ -1,7 +1,9 @@
 import sqlite3
 from datetime import datetime, timezone
 
-DB_PATH = "checkpoints.db"
+# Importado de config.py: uma única fonte da verdade para o caminho
+# do banco, compartilhada com o checkpointer do LangGraph em graph.py.
+from config import DB_PATH
 
 
 def init_decision_log():

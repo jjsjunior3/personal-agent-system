@@ -1,6 +1,6 @@
 services:
-  # Serviço de API do supervisor - o "supervisor" que futuramente vai
-  # rodar a lógica do LangGraph.
+  # Serviço de API do supervisor - o "supervisor" que roda a lógica
+  # do LangGraph (roteamento, triagem, human-in-the-loop).
   supervisor-api:
     build:
       context: ./supervisor_api 
@@ -8,6 +8,27 @@ services:
       - "8000:8000" 
     env_file:
       - .env
+    volumes:
+      # PERSISTÊNCIA — esta é a linha que impede a perda de dados.
+      #
+      # "supervisor_data" é um VOLUME NOMEADO, declarado no bloco
+      # `volumes:` no fim deste arquivo. O Docker guarda o conteúdo dele
+      # FORA do ciclo de vida do container: derrubar, reconstruir a
+      # imagem ou até apagar o container não apaga o volume.
+      #
+      # Sem isto, /app/data vivia na camada gravável do container, e todo
+      # `docker compose up --build` zerava o histórico das conversas
+      # (checkpointer do LangGraph) e a memória de decisões — o que
+      # tornava a auto-aprovação da Fase 7 impossível de acumular na
+      # prática, porque as 5 aprovações seguidas nunca sobreviviam.
+      #
+      # Por que volume nomeado e não bind mount (./data:/app/data)?
+      # O volume nomeado é gerenciado pelo Docker e se comporta igual em
+      # Windows, Mac e Linux, sem o problema de o container (rodando como
+      # root) criar arquivos root na sua pasta do projeto. O preço é que
+      # o arquivo não aparece no explorador — para inspecionar, use:
+      #   docker compose exec supervisor-api ls -la /app/data
+      - supervisor_data:/app/data
     depends_on:
       trello_mcp:
         condition: service_healthy
@@ -21,7 +42,7 @@ services:
       start_period: 10s
   
   # Serviço do bot do TELEGRAM - o "cliente" que fala com o usuário
-  # e repassa a menssagem para a API.
+  # e repassa a mensagem para a API.
   telegram-bot:
     build:
       context: ./telegram_bot
@@ -31,7 +52,7 @@ services:
       supervisor-api:
         # só inicia o bot depois que o healthcheck da API acima
         # reportar "healthy" - evita o ocorrido onde o bot tenta
-        # falar com aum API que aidna nºao terminou de subir.
+        # falar com uma API que ainda não terminou de subir.
         condition: service_healthy
   
   trello_mcp:
@@ -47,13 +68,36 @@ services:
       start_period: 10s
 
   docs_mcp:
-      build:
-        context: ./mcp_servers/docs_server
-      volumes:
-        - "D:/Portal Conexão/AVA/docs:/app/synereduc_docs:ro"
-      healthcheck:
-        test: ["CMD", "python", "-c", "import socket; s = socket.create_connection(('localhost', 8002), timeout=3)"]
-        interval: 5s
-        timeout: 3s
-        retries: 5
-        start_period: 10s
+    build:
+      context: ./mcp_servers/docs_server
+    volumes:
+      # PORTABILIDADE — antes esta linha era o caminho absoluto
+      # "D:/Portal Conexão/AVA/docs", que só existe na máquina do autor.
+      # Qualquer outra pessoa que clonasse o repositório não conseguia
+      # subir o sistema: o Docker falha ao montar um caminho inexistente.
+      #
+      # A sintaxe ${VARIAVEL:-valor_padrao} é expansão com valor padrão:
+      # o Compose usa SYNEREDUC_DOCS_PATH se ela estiver definida no .env,
+      # e cai em ./docs_sample se não estiver.
+      #
+      # O efeito prático é o que importa para um projeto open source:
+      # quem clona consegue rodar imediatamente com a documentação de
+      # exemplo que vai versionada no repositório, sem precisar ter (nem
+      # pedir) os documentos reais do SynerEduc.
+      #
+      # O sufixo :ro monta em READ-ONLY. O agente lê a documentação, e
+      # é bom que ele seja tecnicamente incapaz de alterá-la — é o
+      # princípio do menor privilégio aplicado a uma ferramenta de LLM.
+      - "${SYNEREDUC_DOCS_PATH:-./docs_sample}:/app/synereduc_docs:ro"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.create_connection(('localhost', 8002), timeout=3)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+# Declaração dos volumes nomeados usados acima. Um volume só existe para
+# o Compose se ele for declarado aqui — referenciá-lo no serviço sem
+# declarar resulta em erro de validação do arquivo.
+volumes:
+  supervisor_data:

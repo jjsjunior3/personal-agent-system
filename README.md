@@ -60,9 +60,81 @@ flowchart TD
 | Infraestrutura | Docker Compose (multi-serviço, healthchecks) |
 | Exposição local | Cloudflare Tunnel (webhooks do Trello) |
 
+## Como rodar
+
+### Pré-requisitos
+
+- [Docker](https://docs.docker.com/get-docker/) e Docker Compose (v2+)
+- Chaves de API: [OpenRouter](https://openrouter.ai/keys), [Anthropic](https://console.anthropic.com/settings/keys), um bot do Telegram (via [@BotFather](https://t.me/botfather)) e credenciais do [Trello](https://trello.com/power-ups/admin)
+
+### Três passos
+
+```bash
+git clone https://github.com/jjsjunior3/personal-agent-system.git
+cd personal-agent-system
+
+cp .env.example .env     # depois abra o .env e preencha as chaves
+docker compose up --build
+```
+
+O `.env.example` documenta cada variável, onde obtê-la e quais são
+realmente obrigatórias. **Não é necessário ter a documentação do SynerEduc**
+para rodar: se `SYNEREDUC_DOCS_PATH` ficar em branco, o sistema usa a pasta
+[`docs_sample/`](./docs_sample) que vem no repositório, e o agente de
+triagem faz o grounding nela normalmente.
+
+### Verificar que subiu
+
+```bash
+curl http://localhost:8000/health        # {"status":"ok"}
+docker compose ps                        # os 4 serviços como "healthy"
+```
+
+Mande uma mensagem qualquer para o seu bot no Telegram. Teste os dois
+caminhos do roteador:
+
+| Mensagem | Caminho esperado |
+|---|---|
+| `bom dia, tudo certo?` | conversa geral (Gemini Flash) |
+| `tive uma ideia: criar um painel de inadimplência por turma` | triagem (Claude Sonnet) → análise → pergunta se cria o card |
+
+### Onde ficam os dados
+
+O histórico das conversas (checkpointer do LangGraph) e a memória de
+decisões vivem num volume nomeado do Docker, `supervisor_data`, montado em
+`/app/data`. Ele **sobrevive** a `docker compose up --build` — é o que
+permite a auto-aprovação da Fase 7 acumular aprovações ao longo de semanas.
+
+```bash
+docker compose exec supervisor-api ls -la /app/data   # inspecionar
+docker volume rm personal-agent-system_supervisor_data  # zerar a memória
+```
+
+### Opcional — notificações proativas do Trello
+
+O webhook exige uma URL pública. Em desenvolvimento, use um túnel:
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+Com a URL do túnel em mãos, preencha `TRELLO_WEBHOOK_CALLBACK_URL` e
+`TRELLO_BOARD_ID` no `.env` e registre o webhook uma única vez:
+
+```bash
+curl -X POST "https://api.trello.com/1/webhooks/" \
+  -d "key=$TRELLO_API_KEY" \
+  -d "token=$TRELLO_TOKEN" \
+  -d "idModel=$TRELLO_BOARD_ID" \
+  -d "callbackURL=$TRELLO_WEBHOOK_CALLBACK_URL"
+```
+
+O Trello faz um `HEAD` na URL antes de aceitar o registro — por isso a API
+expõe `HEAD /webhooks/trello`. Mova um card de coluna para testar.
+
 ## Status do projeto (v1)
 
-- [x] Fase 0 — Fundação: Docker Compose, FastAPI, bot do Telegram, persistência de conversa
+- [x] Fase 0 — Fundação: Docker Compose, FastAPI, bot do Telegram, persistência de conversa (volume nomeado)
 - [x] Fase 1 — Roteamento condicional (conversa geral x triagem) com structured output
 - [x] Fase 2 — Agente de triagem com Claude Sonnet e análise estruturada (necessária/viável/agrega valor)
 - [x] Fase 3 — Criação de card no Trello via MCP quando a recomendação é "seguir"
@@ -81,6 +153,10 @@ flowchart TD
 Cada fase deste projeto foi implementada e depurada por mim, linha por linha — o objetivo não é só ter o sistema funcionando, mas entender profundamente cada decisão de engenharia por trás dele: por que usar `AsyncSqliteSaver` em vez de `SqliteSaver`, por que `interrupt()` pausa a execução de verdade em vez de simular uma confirmação, por que a validação de sim/não é determinística e não feita por LLM, como o MCP conecta agentes a ferramentas externas de forma padronizada.
 
 Esse projeto também dialoga diretamente com tendências atuais de IA em produção (agentes conectados a ferramentas via protocolos como MCP, humano no loop, grounding em documentação real) — discutidas, por exemplo, no relatório "AI Trends 2026" do Google Cloud.
+
+## Licença
+
+[MIT](./LICENSE) — sinta-se livre para usar, adaptar e contribuir.
 
 ---
 
