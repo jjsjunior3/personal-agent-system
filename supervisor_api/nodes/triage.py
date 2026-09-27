@@ -1,14 +1,14 @@
 import os
 from typing import Literal
 
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
 from langgraph.types import interrupt
 
-from memory.decision_log import log_decision, count_consecutive_approvals, init_decision_log
-from memory.rules_store import is_auto_approved, set_auto_approve, init_rules_store
+from memory.decision_log import log_decision, init_decision_log
+from memory.rules_store import is_auto_approved, init_rules_store
 
 
 class TriageAnalysis(BaseModel):
@@ -44,9 +44,15 @@ mcp_client = MultiServerMCPClient(
 )
 
 
-triage_llm = ChatAnthropic(
-    model="claude-sonnet-4-5-20250929",
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
+# GPT-5.4, direto na OpenAI (não via OpenRouter) — usa o crédito de
+# estudo da OpenAI em vez do crédito da Anthropic, reservado pro uso
+# da empresa (SynerEduc). Preço: $2,50/$15 por 1M tokens, faixa
+# parecida com a do Claude Sonnet que estava antes — julgar se uma
+# ideia é necessária, viável e agrega valor é raciocínio de verdade,
+# não classificação simples, então não compensa ir num "mini"/"nano".
+triage_llm = ChatOpenAI(
+    model="gpt-5.4",
+    api_key=os.getenv("OPENAI_API_KEY"),
 )
 
 structured_triage_llm = triage_llm.with_structured_output(TriageAnalysis)
@@ -76,27 +82,18 @@ Seja direto e crítico. Prefira recomendar "descartar" ou "revisar_depois" \
 a inflar ideias medianas."""
 
 
-# Garante que as tabelas de memória (log de decisões e regras) existem
-# antes de qualquer uso — chamado uma vez na importação do módulo,
-# mesmo padrão de inicialização já usado para o grafo (build_graph).
 init_decision_log()
 init_rules_store()
 
-# Identifica este tipo específico de ação para fins de memória/curadoria.
-# Se no futuro outras ações de risco existirem (ex: enviar e-mail), cada
-# uma teria sua própria constante e sua própria trilha de confiança.
 ACTION_TYPE = "create_trello_card"
 
 
 async def _investigate(user_message: str) -> list:
     """
-    Etapa 1 — Investigação: roda um loop onde o Sonnet pode chamar as
+    Etapa 1 — Investigação: roda um loop onde o modelo pode chamar as
     ferramentas de documentação (docs) quantas vezes achar necessário,
     até decidir que já tem contexto suficiente. Não usa a ferramenta
     do Trello aqui — essa etapa é só para reunir CONTEXTO, não para agir.
-
-    Devolve o histórico completo da conversa (incluindo os resultados
-    das ferramentas usadas), pronto para a etapa de decisão final.
     """
     all_tools = await mcp_client.get_tools()
     docs_tools = [t for t in all_tools if t.name in ("list_docs", "read_doc")]
@@ -125,14 +122,23 @@ async def _investigate(user_message: str) -> list:
     return messages
 
 
-async def triage_node(state: dict) -> dict:
+async def triage_analyze_node(state: dict) -> dict:
+    """
+    Node 1 de 2 — só investiga e analisa, SEM interrupt(). Isso é
+    proposital: qualquer coisa cara/não-determinística (chamadas de
+    LLM) tem que ficar de fora de um node que contém interrupt(),
+    porque resumir um interrupt reexecuta o node inteiro do zero. Se
+    a análise estivesse no mesmo node do interrupt de aprovação, cada
+    "sim" do usuário rodaria o GPT-5.4 de novo — e como o modelo não é
+    determinístico, podia mudar de recomendação entre a pergunta e a
+    resposta (foi exatamente esse bug que apareceu no teste).
+
+    Guarda o resultado em pending_analysis, no ESTADO do grafo — não
+    numa variável local — pra sobreviver até o próximo node rodar.
+    """
     last_message = state["messages"][-1]
 
-    # Etapa 1: investigação (pode ou não consultar documentação).
     investigation_messages = await _investigate(last_message.content)
-
-    # Etapa 2: decisão final estruturada, já com todo o contexto
-    # reunido na etapa anterior (incluindo qualquer documento lido).
     analysis = structured_triage_llm.invoke(investigation_messages)
 
     resumo = (
@@ -144,8 +150,30 @@ async def triage_node(state: dict) -> dict:
         f"{analysis.justificativa}"
     )
 
-    if analysis.recomendacao == "seguir":
-        # Verifica se já existe confiança suficiente para pular o HITL.
+    return {
+        "pending_analysis": {
+            "recomendacao": analysis.recomendacao,
+            "resumo": resumo,
+            "idea": last_message.content,
+        }
+    }
+
+
+async def triage_approve_node(state: dict) -> dict:
+    """
+    Node 2 de 2 — só lê o resultado já pronto de pending_analysis (sem
+    LLM nenhum antes do interrupt) e decide se pede aprovação. Como
+    não há nada caro antes do interrupt(), resumir esse node é seguro:
+    o pior caso de um replay aqui é reler duas variáveis do estado.
+    """
+    pending = state["pending_analysis"]
+    recomendacao = pending["recomendacao"]
+    resumo = pending["resumo"]
+    idea = pending["idea"]
+
+    just_approved_action = None
+
+    if recomendacao == "seguir":
         if is_auto_approved(ACTION_TYPE):
             aprovado = True
             log_decision(ACTION_TYPE, approved=True)
@@ -157,27 +185,18 @@ async def triage_node(state: dict) -> dict:
             aprovado = user_response.strip().lower() in ("sim", "s", "yes", "y")
             log_decision(ACTION_TYPE, approved=aprovado)
 
-            # Verifica se acabamos de completar 5 aprovações seguidas,
-            # e se ainda não existe regra ativa (evita perguntar de novo
-            # caso o usuário já tenha recusado ativar antes).
-            if aprovado and count_consecutive_approvals(ACTION_TYPE) >= 5 and not is_auto_approved(ACTION_TYPE):
-                offer_response = interrupt(
-                    "💡 Notei que você aprovou a criação de card 5 vezes seguidas. "
-                    "Quer que eu pare de perguntar e crie automaticamente daqui pra "
-                    "frente, quando a recomendação for 'seguir'? (sim/não)"
-                )
-                if offer_response.strip().lower() in ("sim", "s", "yes", "y"):
-                    set_auto_approve(ACTION_TYPE, True)
-                    resumo += "\n\n✅ Auto-aprovação ativada para criação de cards."
-
         if aprovado:
             all_tools = await mcp_client.get_tools()
             create_card_tool = next(t for t in all_tools if t.name == "create_card")
             card_result = await create_card_tool.ainvoke(
-                {"title": last_message.content[:100], "description": resumo}
+                {"title": idea[:100], "description": resumo}
             )
             resumo += f"\n\n📌 {card_result}"
+            just_approved_action = ACTION_TYPE
         else:
             resumo += "\n\n👍 Ok, não vou criar o card."
 
-    return {"messages": [("assistant", resumo)]}
+    return {
+        "messages": [("assistant", resumo)],
+        "just_approved_action": just_approved_action,
+    }
