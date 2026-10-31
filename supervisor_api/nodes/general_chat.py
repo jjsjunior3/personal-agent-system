@@ -1,14 +1,10 @@
-import os
-from langchain_openai import ChatOpenAI
+from llm_config import create_chat_model
 
 # Cliente do LLM para conversa geral - continua com o gemini flash via
 # OpenRouter, já que é o modelo certo para esse tipo de tarefa
 # (conversa contidiana, custo baixo, sem necessidade de raciocínio profundo).
-llm = ChatOpenAI(
-    model="google/gemini-2.5-flash",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
-)
+# Provedor e modelo vêm de llm_config (LLM_CHAT_PROVIDER/LLM_CHAT_MODEL).
+llm = create_chat_model("chat")
 
 GENERAL_CHAT_SYSTEM_PROMPT = """Você é o assistente pessoal de Junior, parte de \
 um sistema multiagente. Seu papel é conversa geral e suporte do dia a dia — \

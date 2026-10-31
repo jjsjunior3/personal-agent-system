@@ -1,12 +1,11 @@
-import os
 from typing import Literal
 
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
 from langgraph.types import interrupt
 
+from llm_config import create_chat_model
 from memory.decision_log import log_decision
 from memory.rules_store import is_auto_approved
 
@@ -44,16 +43,13 @@ mcp_client = MultiServerMCPClient(
 )
 
 
-# GPT-5.4, direto na OpenAI (não via OpenRouter) — usa o crédito de
-# estudo da OpenAI em vez do crédito da Anthropic, reservado pro uso
-# da empresa (SynerEduc). Preço: $2,50/$15 por 1M tokens, faixa
-# parecida com a do Claude Sonnet que estava antes — julgar se uma
-# ideia é necessária, viável e agrega valor é raciocínio de verdade,
-# não classificação simples, então não compensa ir num "mini"/"nano".
-triage_llm = ChatOpenAI(
-    model="gpt-5.4",
-    api_key=os.getenv("OPENAI_API_KEY"),
-)
+# GPT-5.4 via OpenRouter por padrão ("openai/gpt-5.4"), para usar os
+# créditos da OpenRouter. Julgar se uma ideia é necessária, viável e
+# agrega valor é raciocínio de verdade, não classificação simples,
+# então não compensa ir num "mini"/"nano". Para voltar à OpenAI direta:
+# LLM_TRIAGE_PROVIDER=openai e LLM_TRIAGE_MODEL=gpt-5.4 (sem fallback
+# automático entre provedores; veja llm_config.py).
+triage_llm = create_chat_model("triage")
 
 structured_triage_llm = triage_llm.with_structured_output(TriageAnalysis)
 
@@ -137,7 +133,7 @@ async def triage_analyze_node(state: dict) -> dict:
     last_message = state["messages"][-1]
 
     investigation_messages = await _investigate(last_message.content)
-    analysis = structured_triage_llm.invoke(investigation_messages)
+    analysis = await structured_triage_llm.ainvoke(investigation_messages)
 
     resumo = (
         f"**Análise da ideia**\n\n"

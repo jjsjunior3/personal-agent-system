@@ -1,8 +1,8 @@
-import os
 from typing import Literal
 
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
+
+from llm_config import create_chat_model
 
 class RouteDecision(BaseModel):
     """
@@ -24,11 +24,8 @@ class RouteDecision(BaseModel):
 # Cliente do LLM usado exclusivamente para decisão de roteamente.
 # Gemini Flash é o suficiente aqui: classificar em duas categorias é uma
 # tarefa simples, não precisa de um modelo mais caro/poderoso.
-router_llm = ChatOpenAI(
-    model="google/gemini-2.5-flash",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    base_url="https://openrouter.ai/api/v1",
-)
+# Provedor e modelo vêm de llm_config (LLM_ROUTER_PROVIDER/LLM_ROUTER_MODEL).
+router_llm = create_chat_model("router")
 
 # .with_structured_output(RouteDecision) reconfigura o cliente para
 # SEMPRE devolver um objeto RouteDecision válido, em vez de texto livre.
