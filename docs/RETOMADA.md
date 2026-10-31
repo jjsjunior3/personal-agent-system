@@ -105,5 +105,31 @@ em 31/10/2026 (existe, US$ 2,50/US$ 15 por 1M tokens), mas não lista os
 parâmetros suportados. O primeiro teste real deve ser uma única ideia fictícia,
 observando o painel da OpenRouter.
 
-Voz continua na OpenAI direta (`telegram_bot/bot.py`); a migração fica para
-uma etapa separada.
+## Transcrição de voz via OpenRouter
+
+Problema: `telegram_bot/bot.py` criava um `AsyncOpenAI` fixo na OpenAI direta,
+com `gpt-4o-mini-transcribe` no código. Uma falha na transcrição gerava exceção
+no handler e o usuário ficava sem resposta.
+
+Contrato conferido em 31/10/2026: a OpenRouter expõe
+`POST /api/v1/audio/transcriptions`, compatível com o upload multipart da OpenAI
+(campos `file` e `model`), até 25 MB por upload e cerca de 60 s de
+processamento. Aceita `ogg` entre os formatos, mas a documentação não confirma
+o codec Opus e diz que o suporte varia por modelo/provedor. O catálogo de
+transcrição lista `openai/gpt-4o-mini-transcribe`.
+
+Decisões:
+
+- `telegram_bot/transcription.py` com `TRANSCRIPTION_PROVIDER` e
+  `TRANSCRIPTION_MODEL`; padrão OpenRouter + `openai/gpt-4o-mini-transcribe`.
+  Mesma regra do supervisor: sem fallback e `base_url` explícita.
+- Limite de 20 MB (o `getFile` da Bot API não entrega arquivos maiores),
+  verificado antes do download quando o Telegram informa o tamanho.
+- Falha de transcrição ou texto vazio geram uma resposta ao usuário, sem
+  tentar outro provedor.
+
+Validação: 5 testes simulados em `telegram_bot/tests` (configuração, ausência
+de fallback, limite de tamanho e argumentos enviados, com cliente falso).
+Não validado: aceitação real de OGG/Opus por esse modelo na OpenRouter, latência
+e custo. O primeiro teste real deve ser um áudio curto, observando o painel.
+Se OGG/Opus for recusado, a alternativa é converter para WAV antes do envio.

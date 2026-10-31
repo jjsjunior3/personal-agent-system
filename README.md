@@ -55,7 +55,7 @@ flowchart TD
 | API | FastAPI (async) |
 | LLM de roteamento e conversa geral | Gemini 2.5 Flash (via OpenRouter) |
 | LLM de triagem/decisão | GPT-5.4 (`openai/gpt-5.4` via OpenRouter por padrão, structured output; configurável em `llm_config.py`) |
-| Interface | Telegram Bot (texto e áudio, com transcrição via OpenAI) |
+| Interface | Telegram Bot (texto e áudio, com transcrição `openai/gpt-4o-mini-transcribe` via OpenRouter por padrão) |
 | Persistência | SQLite (checkpointer do LangGraph + memória de decisões/regras) |
 | Infraestrutura | Docker Compose (multi-serviço, healthchecks) |
 | Exposição local | Cloudflare Tunnel (webhooks do Trello) |

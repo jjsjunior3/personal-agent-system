@@ -1,18 +1,25 @@
 import os
-import io
 import httpx
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 from telegram import Update
 from telegram.ext import Application, MessageHandler, ContextTypes, filters
 from telegram.request import HTTPXRequest
 
 load_dotenv()
 
+from transcription import (
+    MAX_AUDIO_BYTES,
+    AudioTooLargeError,
+    create_transcription_client,
+    transcribe_voice,
+)
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 SUPERVISOR_API_URL = "http://supervisor-api:8000/invoke"
 
-openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Provedor e modelo vêm de transcription.py (TRANSCRIPTION_PROVIDER /
+# TRANSCRIPTION_MODEL); padrão: OpenRouter. Sem chave, o bot não sobe.
+transcription_client, transcription_config = create_transcription_client()
 
 async def send_to_supervisor(user_id: str, text: str) -> str:
     """
@@ -22,7 +29,7 @@ async def send_to_supervisor(user_id: str, text: str) -> str:
     handlers diferentes (textio e voz) precisam desse mesmo comoprtamento.
     """
     # Timeout maior que o padrão: a triagem agora pode rodar um loop de
-    # investigação com várias chamadas ao Claude + tools de docs antes
+    # investigação com várias chamadas ao LLM + tools de docs antes
     # de responder, o que pode facilmente passar de 30s.
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:
@@ -50,29 +57,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Trata mensagens de VOZ: baixa o arquivo de áudio do Telegram,
-    transcreve usando Whisper, e então segue o mesmo caminho de uma
-    mensagem de texto normal — o resto do sistema não sabe (e não
-    precisa saber) que a mensagem original era um áudio.
+    transcreve, e então segue o mesmo caminho de uma mensagem de texto
+    normal — o resto do sistema não sabe (e não precisa saber) que a
+    mensagem original era um áudio.
     """
     user_id = str(update.effective_user.id)
+    voice = update.message.voice
+
+    # Recusa antes de baixar: o Telegram informa o tamanho no update.
+    if voice.file_size and voice.file_size > MAX_AUDIO_BYTES:
+        await update.message.reply_text("Esse áudio é grande demais. Tente um mais curto.")
+        return
 
     # Baixa o arquivo de voz enviado pelo usuário. O Telegram entrega
     # mensagens de voz no formato OGG/Opus.
-    voice_file = await update.message.voice.get_file()
+    voice_file = await voice.get_file()
     audio_bytes = await voice_file.download_as_bytearray()
 
-    # O SDK da OpenAI espera um objeto tipo arquivo com um nome que
-    # indique a extensão (usado para identificar o formato do áudio).
-    audio_buffer = io.BytesIO(audio_bytes)
-    audio_buffer.name = "voice.ogg"
+    try:
+        text = await transcribe_voice(transcription_client, transcription_config, bytes(audio_bytes))
+    except AudioTooLargeError:
+        await update.message.reply_text("Esse áudio é grande demais. Tente um mais curto.")
+        return
+    except Exception as e:
+        # Sem fallback para outro provedor: avisa e deixa o usuário tentar de novo.
+        print(f"DEBUG transcrição falhou: {e!r}", flush=True)
+        await update.message.reply_text("Não consegui transcrever o áudio agora. Tente de novo ou mande por texto.")
+        return
 
-    transcription = await openai_client.audio.transcriptions.create(
-        model="gpt-4o-mini-transcribe",
-        file=audio_buffer,
-        language="pt",
-    )
+    if not text:
+        await update.message.reply_text("Não entendi nada nesse áudio. Pode repetir?")
+        return
 
-    reply_text = await send_to_supervisor(user_id, transcription.text)
+    reply_text = await send_to_supervisor(user_id, text)
     await update.message.reply_text(reply_text)
 
 def main() -> None:
