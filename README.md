@@ -93,3 +93,7 @@ O projeto está sendo retomado com explicação das decisões, implementação i
 Consulte [diagnóstico e próximos passos](docs/RETOMADA.md). Nenhum serviço precisa ser recriado para ler esse diagnóstico.
 
 A persistência local agora tem caminho configurável, volume no Compose e backup SQLite com testes fictícios. A migração dos dados existentes e a validação operacional ainda estão pendentes; veja [o procedimento de persistência](docs/PERSISTENCIA.md) antes de recriar serviços.
+
+## Testes
+
+`python scripts/run_tests.py` roda todas as suítes sem chamadas externas. O mesmo comando roda no hook de pre-push e no CI do GitHub. Veja [como rodar e a regra de testes](docs/TESTES.md).

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Roda scripts/run_tests.py antes de cada push. Ative uma vez com:
+#   git config core.hooksPath .githooks
+# Para pular numa emergência: git push --no-verify
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# No Windows, "python" pode ser o atalho da Microsoft Store que não executa
+# nada; por isso testamos cada candidato antes de usar. PYTHON tem prioridade.
+for candidate in "$PYTHON" "py -3" python3 python; do
+    [ -z "$candidate" ] && continue
+    if $candidate -c "import sys; sys.exit(sys.version_info < (3, 10))" >/dev/null 2>&1; then
+        echo "pre-push: rodando testes com $candidate"
+        exec $candidate "$ROOT/scripts/run_tests.py"
+    fi
+done
+
+echo "pre-push: nenhum Python 3.10+ encontrado. Defina PYTHON com o caminho do executável." >&2
+exit 1

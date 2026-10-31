@@ -1,0 +1,2 @@
+# Hooks rodam em sh: precisam de LF mesmo com core.autocrlf=true no Windows
+.githooks/* text eol=lf
