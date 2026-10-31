@@ -7,8 +7,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel, Field
 from langgraph.types import interrupt
 
-from memory.decision_log import log_decision, init_decision_log
-from memory.rules_store import is_auto_approved, init_rules_store
+from memory.decision_log import log_decision
+from memory.rules_store import is_auto_approved
 
 
 class TriageAnalysis(BaseModel):
@@ -82,8 +82,6 @@ Seja direto e crítico. Prefira recomendar "descartar" ou "revisar_depois" \
 a inflar ideias medianas."""
 
 
-init_decision_log()
-init_rules_store()
 
 ACTION_TYPE = "create_trello_card"
 

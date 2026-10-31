@@ -19,3 +19,8 @@ venv/
 
 # Pasta de depenência do Docker
 .docker/
+# Estado e backups privados
+data/
+backups/
+*.db-*
+*.sqlite3-*

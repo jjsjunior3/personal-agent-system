@@ -4,6 +4,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 import aiosqlite
+from database import database_path
 
 from nodes.general_chat import general_chat_node
 from nodes.triage import triage_analyze_node, triage_approve_node
@@ -61,7 +62,7 @@ async def build_graph():
     )
     builder.add_edge("offer_auto_approve", END)
 
-    conn = await aiosqlite.connect("checkpoints.db")
+    conn = await aiosqlite.connect(database_path())
     checkpointer = AsyncSqliteSaver(conn)
 
     return builder.compile(checkpointer=checkpointer)

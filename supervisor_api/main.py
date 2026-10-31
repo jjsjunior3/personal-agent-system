@@ -6,9 +6,11 @@ import httpx
 
 import os
 
-import graph
-
 load_dotenv()
+
+import graph
+from memory.decision_log import init_decision_log
+from memory.rules_store import init_rules_store
 
 app = FastAPI(title="SupervisorAPI")
 
@@ -22,6 +24,8 @@ async def startup_event():
     finalmente construimos o grafo de verdade, já que o build_graph()
     precisa de 'await' e não pode rodar no nível do módulo.
     """
+    init_decision_log()
+    init_rules_store()
     graph.supervisor_graph = await graph.build_graph()
 
 class InvokeRequest(BaseModel):

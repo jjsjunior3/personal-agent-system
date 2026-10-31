@@ -1,10 +1,10 @@
 import sqlite3
 
-DB_PATH = "checkpoints.db"
+from database import database_path
 
 
 def init_rules_store():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(database_path(), timeout=10.0)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
@@ -21,7 +21,7 @@ def init_rules_store():
 
 
 def is_auto_approved(action_type: str) -> bool:
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(database_path(), timeout=10.0)
     try:
         cursor = conn.execute(
             "SELECT auto_approve FROM rules WHERE action_type = ?",
@@ -34,7 +34,7 @@ def is_auto_approved(action_type: str) -> bool:
 
 
 def set_auto_approve(action_type: str, enabled: bool) -> None:
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(database_path(), timeout=10.0)
     try:
         conn.execute(
             """
@@ -49,7 +49,7 @@ def set_auto_approve(action_type: str, enabled: bool) -> None:
 
 
 def has_rule(action_type: str) -> bool:
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(database_path(), timeout=10.0)
     try:
         cursor = conn.execute(
             "SELECT 1 FROM rules WHERE action_type = ?",

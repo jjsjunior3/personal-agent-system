@@ -4,6 +4,10 @@ services:
   supervisor-api:
     build:
       context: ./supervisor_api 
+    environment:
+      SUPERVISOR_DB_PATH: /app/data/checkpoints.db
+    volumes:
+      - ./data/supervisor:/app/data
     ports:
       - "8000:8000" 
     env_file:

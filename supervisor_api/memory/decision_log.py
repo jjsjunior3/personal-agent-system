@@ -1,11 +1,11 @@
 import sqlite3
 from datetime import datetime, timezone
 
-DB_PATH = "checkpoints.db"
+from database import database_path
 
 
 def init_decision_log():
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(database_path(), timeout=10.0)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
@@ -24,7 +24,7 @@ def init_decision_log():
 
 
 def log_decision(action_type: str, approved: bool) -> None:
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(database_path(), timeout=10.0)
     try:
         conn.execute(
             "INSERT INTO decisions (action_type, approved, created_at) VALUES (?, ?, ?)",
@@ -36,7 +36,7 @@ def log_decision(action_type: str, approved: bool) -> None:
 
 
 def count_consecutive_approvals(action_type: str) -> int:
-    conn = sqlite3.connect(DB_PATH, timeout=10.0)
+    conn = sqlite3.connect(database_path(), timeout=10.0)
     try:
         cursor = conn.execute(
             "SELECT approved FROM decisions WHERE action_type = ? ORDER BY id DESC",
