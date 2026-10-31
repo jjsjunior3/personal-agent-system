@@ -17,7 +17,7 @@ flowchart TD
 
     API --> ROUTER{"Router\n(Gemini Flash)"}
     ROUTER -->|conversa geral| GC["General Chat\n(Gemini Flash)"]
-    ROUTER -->|nova ideia| TRIAGE["Triage Agent\n(Claude Sonnet)"]
+    ROUTER -->|nova ideia| TRIAGE["Triage Agent\n(GPT-5.4)"]
 
     TRIAGE -->|consulta se necessário| DOCS["docs_mcp\n(docs do SynerEduc)"]
     TRIAGE -->|avalia: necessária / viável / agrega valor| DECISION{"Recomendação"}
@@ -54,7 +54,7 @@ flowchart TD
 | Integração com ferramentas | MCP (Model Context Protocol) via FastMCP + langchain-mcp-adapters |
 | API | FastAPI (async) |
 | LLM de roteamento e conversa geral | Gemini 2.5 Flash (via OpenRouter) |
-| LLM de triagem/decisão | Claude Sonnet (Anthropic, structured output) |
+| LLM de triagem/decisão | GPT-5.4 (`openai/gpt-5.4` via OpenRouter por padrão, structured output; configurável em `llm_config.py`) |
 | Interface | Telegram Bot (texto e áudio, com transcrição via OpenAI) |
 | Persistência | SQLite (checkpointer do LangGraph + memória de decisões/regras) |
 | Infraestrutura | Docker Compose (multi-serviço, healthchecks) |
@@ -64,7 +64,7 @@ flowchart TD
 
 - [x] Fase 0 — Fundação: Docker Compose, FastAPI, bot do Telegram, persistência de conversa
 - [x] Fase 1 — Roteamento condicional (conversa geral x triagem) com structured output
-- [x] Fase 2 — Agente de triagem com Claude Sonnet e análise estruturada (necessária/viável/agrega valor)
+- [x] Fase 2 — Agente de triagem com análise estruturada (configuração atual: GPT-5.4) (necessária/viável/agrega valor)
 - [x] Fase 3 — Criação de card no Trello via MCP quando a recomendação é "seguir"
 - [x] Fase 4 — Human-in-the-loop: interrupt do LangGraph pedindo aprovação (sim/não) antes de criar o card
 - [x] Fase 4.5 — Suporte a mensagens de voz no Telegram (transcrição automática)
@@ -85,3 +85,11 @@ Esse projeto também dialoga diretamente com tendências atuais de IA em produç
 ---
 
 Projeto pessoal de [Junior](https://github.com/jjsjunior3) — desenvolvedor e fundador do [SynerEduc](https://github.com/jjsjunior3/SynerEduc-P).
+
+## Retomada acompanhada
+
+O projeto está sendo retomado com explicação das decisões, implementação incremental e verificação de cada etapa. O próximo foco é preservar o estado SQLite entre recriações de contêiner, com backup e testes antes da migração. As fases marcadas acima registram o histórico do projeto; ainda precisam de validação operacional nesta retomada.
+
+Consulte [diagnóstico e próximos passos](docs/RETOMADA.md). Nenhum serviço precisa ser recriado para ler esse diagnóstico.
+
+A persistência local agora tem caminho configurável, volume no Compose e backup SQLite com testes fictícios. A migração dos dados existentes e a validação operacional ainda estão pendentes; veja [o procedimento de persistência](docs/PERSISTENCIA.md) antes de recriar serviços.
